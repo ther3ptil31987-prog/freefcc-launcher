@@ -606,14 +606,26 @@ class LauncherApp:
         self.root.after(0, lambda: self.log(f"adb -s {serial} install -r FreeFCC.apk"))
         rc, out, err = run_adb(["-s", serial, "install", "-r", apk], timeout=120)
 
-        if rc != 0 and ("INSTALL_FAILED_UPDATE_INCOMPATIBLE" in out or "signatures do not match" in (out+err).lower()):
+        if "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in out or "signatures do not match" in (out+err).lower():
             # Signature mismatch — uninstall old, then install fresh
             self.root.after(0, lambda: self.log("Signature mismatch — uninstalling old version..."))
             run_adb(["-s", serial, "uninstall", FREEFCC_PACKAGE], timeout=60)
             self.root.after(0, lambda: self.set_progress(40, "Reinstalling..."))
             rc, out, err = run_adb(["-s", serial, "install", apk], timeout=120)
 
-        if rc == 0 and ("Success" in out or "success" in out.lower() or "Failure" not in out):
+        # Check install result — adb sometimes returns rc=0 even on failure,
+        # so we verify by checking if the package actually exists on the device
+        install_ok = False
+        if "Failure" in out:
+            install_ok = False
+        elif "Success" in out or "success" in out.lower():
+            install_ok = True
+        else:
+            # Ambiguous output — verify by checking pm path
+            rc2, out2, err2 = run_adb(["-s", serial, "shell", "pm", "path", FREEFCC_PACKAGE], timeout=10)
+            install_ok = "package:" in out2
+
+        if install_ok:
             self.root.after(0, lambda: self.log(f"✓ APK installed"))
         else:
             self.root.after(0, lambda: self.log(f"✗ Install failed: {out.strip()} {err.strip()}"))
