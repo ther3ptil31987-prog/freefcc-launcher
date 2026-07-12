@@ -1,35 +1,45 @@
 <div align="center">
 
+[![GitHub release](https://img.shields.io/github/v/release/doesthings/freefcc-launcher?style=flat-square)](https://github.com/doesthings/freefcc-launcher/releases)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/doesthings/freefcc-launcher?style=flat-square)](https://github.com/doesthings/freefcc-launcher/stargazers)
+
 # FreeFCC Launcher
 
-### Desktop installer for FreeFCC on DJI RC Pro 2 / RC Plus
+### One click installer to put FreeFCC onto your DJI RC Pro 2 or RC Plus
 
-A Windows app that installs FreeFCC onto your DJI controller over USB. No terminal. No adb to install. No command line. Just plug in, click, and fly.
+This is just a launcher. It installs the [FreeFCC](https://github.com/doesthings/FreeFCC) app onto your DJI controller over USB. That is all it does. FreeFCC does the actual FCC unlock. This just saves you from having to use a terminal.
+
+[![Star on GitHub](https://img.shields.io/badge/Star%20on%20GitHub-%E2%AD%90-yellow?style=for-the-badge&logo=github)](https://github.com/doesthings/freefcc-launcher)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/freefcc)
 
 </div>
 
 ---
 
-> **STATUS: COMPLETELY UNTESTED.** This tool has not been tested on real hardware yet. It is built to work with the [FreeFCC](https://github.com/doesthings/FreeFCC) app and the DJI RC Pro 2 / RC Plus controllers, but nothing has been verified on an actual device. Use at your own risk. If you test it, please [open an issue](https://github.com/doesthings/freefcc-launcher/issues) with the result.
+> **STATUS: COMPLETELY UNTESTED.** This has not been tested on real hardware yet. It is built to work with the [FreeFCC](https://github.com/doesthings/FreeFCC) app and the DJI RC Pro 2 / RC Plus controllers, but nothing has been verified on an actual device. Use at your own risk. If you test it, please [open an issue](https://github.com/doesthings/freefcc-launcher/issues) with the result.
 
 ---
 
-## What This Does
+## What This Is
 
-FreeFCC Launcher is a desktop app for Windows that installs the [FreeFCC](https://github.com/doesthings/FreeFCC) Android app onto your DJI RC Pro 2 or RC Plus controller over a USB cable.
+This is a desktop launcher app for Windows. It does one thing: it installs the [FreeFCC](https://github.com/doesthings/FreeFCC) Android app onto your DJI RC Pro 2 or RC Plus controller over a USB cable.
 
-FreeFCC is a free, open source app that unlocks FCC mode on DJI drones, giving you higher transmit power and more channels for better range. It runs directly on the controller and sends DUMPL commands to the drone's radio over a local TCP socket. No server, no license, no subscription, no tracking.
+FreeFCC is the app that actually unlocks FCC mode on your drone. It is free and open source, made by the same author. Go to the [FreeFCC repo](https://github.com/doesthings/FreeFCC) for that.
 
-This launcher automates the installation so you do not have to mess with terminals, adb, or command lines. It bundles its own adb binary inside the exe, runs it silently in the background, and walks you through the process with a simple click through wizard.
+This launcher exists because the RC Pro 2 and RC Plus do not have a memory card slot for sideloading apps like the RC 2 does. You have to install apps over USB using adb. Most people do not want to install the Android SDK and type commands into a terminal just to put an app on their controller. So this launcher does it for you with a click through wizard.
+
+No terminal. No adb to install. No command line. Just plug in, click, and fly.
 
 <div align="center">
 
 | | |
 |---|---|
-| **Platform** | Windows (64 bit) |
+| **Platform** | Windows 64 bit |
 | **Size** | ~16 MB single exe, no install needed |
 | **Requires** | A USB cable and a DJI RC Pro 2 or RC Plus |
 | **Downloads** | FreeFCC APK automatically from GitHub |
+| **Status** | COMPLETELY UNTESTED |
 
 </div>
 
@@ -64,7 +74,7 @@ The launcher detects when USB debugging is enabled and moves to the next step au
 Click "Download from GitHub" to get the FreeFCC APK. Then click "Install FreeFCC onto Controller". The launcher:
 
 - Downloads the FreeFCC APK from the official GitHub release
-- Installs it onto the controller with adb (silently, no terminal)
+- Installs it onto the controller silently, no terminal visible
 - Grants the permissions FreeFCC needs
 - Launches FreeFCC on the controller
 - Sets the screen to stay awake for 10 minutes so the FCC apply does not get interrupted
@@ -99,14 +109,14 @@ The launcher bundles the Android Debug Bridge (adb) binary inside the exe. When 
 
 The installation process:
 
-1. **Detect** the controller by polling `adb devices -l` every 2 seconds
+1. **Detect** the controller by polling adb devices every 2 seconds
 2. **Guide** the user through enabling USB debugging on the controller screen
 3. **Download** the FreeFCC APK from the official GitHub release
-4. **Install** the APK with `adb install -r`
-5. **Grant** runtime permissions with `pm grant` and `appops set`
-6. **Launch** FreeFCC with `am start`
+4. **Install** the APK on the controller
+5. **Grant** the runtime permissions FreeFCC needs
+6. **Launch** FreeFCC on the controller
 
-After that, FreeFCC runs on the controller and does the FCC unlock itself by sending DUMPL commands to `127.0.0.1:40009`. See the [FreeFCC readme](https://github.com/doesthings/FreeFCC#how-it-works) for how the DUMPL protocol works.
+After that, FreeFCC runs on the controller and does the FCC unlock itself. See the [FreeFCC readme](https://github.com/doesthings/FreeFCC#how-it-works) for how that works.
 
 ---
 
@@ -117,7 +127,7 @@ Requirements: Python 3.12+, [PyInstaller](https://pyinstaller.org/).
 ```powershell
 cd C:\path\to\freefcc-launcher
 
-# Put adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll in the launcher/ folder
+# Put adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll in the folder
 # (from Android platform-tools)
 
 python -m PyInstaller freefcc_launcher.spec --noconfirm --clean
