@@ -1,0 +1,22 @@
+# Binaries
+adb.exe
+AdbWinApi.dll
+AdbWinUsbApi.dll
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

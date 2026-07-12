@@ -1,0 +1,4 @@
+# Binary files (adb from Android platform-tools)
+adb.exe
+AdbWinApi.dll
+AdbWinUsbApi.dll
