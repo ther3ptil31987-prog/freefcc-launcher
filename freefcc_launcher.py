@@ -5,6 +5,7 @@ or RC Plus controller over USB, the same way the OpenFCC launcher does it.
 Step 1: CONNECT    — detect DJI controller via adb devices -l
 Step 2: USB DEBUG   — show per-model guide, auto-advance when ADB bridge is up
 Step 3: INSTALL     — download FreeFCC APK + adb install -r + grant permissions
+                     + optional 4G firmware swap (937MB OTA, RC Pro 2 only)
 Step 4: DONE        — success screen
 
 No server, no license, no terminal. Just plug in USB and click.
@@ -32,6 +33,17 @@ APP_NAME = "FreeFCC Launcher"
 FREEFCC_GITHUB_URL = "https://github.com/doesthings/FreeFCC/releases/download/v1.1/FreeFCC.apk"
 FREEFCC_PACKAGE = "com.freefcc.app"
 FREEFCC_MAIN_ACTIVITY = "com.freefcc.app.MainActivity"
+
+FIRMWARE_URL = "https://github.com/doesthings/freefcc-launcher/releases/download/v1.0.0/firmware_update.zip"
+FIRMWARE_SHA256 = "182e459ba29fc00aec9c66d547cd3fe4fd14bfa47d7063e486af7b82ba3542f6"
+FIRMWARE_SIZE = 982930036
+
+FIRMWARE_PUSH_ATTEMPTS = 3
+FIRMWARE_FLASH_ATTEMPTS = 12
+FIRMWARE_FLASH_ATTEMPT_TIMEOUT = 900
+FIRMWARE_FLASH_TOTAL_TIMEOUT = 1500
+FIRMWARE_SPACE_HEADROOM = 67108864
+FIRMWARE_SHA_TIMEOUT = 180
 
 MODEL_MAP = {
     "rc520": "DJI RC Pro 2",
@@ -178,6 +190,9 @@ class LauncherApp:
         self.locked_serial = None
         self.expected_model = None
         self.polling = True
+        self.firmware_swap_done = BooleanVar(value=False)
+        self.firmware_path = StringVar()
+        self.firmware_ready = BooleanVar(value=False)
 
         self._build_ui()
         self._start_polling()
@@ -313,8 +328,6 @@ class LauncherApp:
         # APK source
         apk_box = ttk.LabelFrame(frame, text="FreeFCC APK", padding=10)
         apk_box.pack(fill="x", pady=(0, 8))
-        row = ttk.Frame(apk_box)
-        row.pack(fill="x")
         self.apk_status_label = ttk.Label(apk_box, text="Click 'Download' to get FreeFCC from GitHub", font=("Segoe UI", 10))
         self.apk_status_label.pack(anchor="w", pady=(4, 0))
         btns = ttk.Frame(apk_box)
@@ -327,6 +340,19 @@ class LauncherApp:
         self.btn_install = ttk.Button(frame, text="Install FreeFCC onto Controller", state=DISABLED,
                                        command=self._do_install)
         self.btn_install.pack(fill="x", pady=(8, 0))
+
+        # 4G firmware swap (optional, RC Pro 2 only)
+        self.fourg_box = ttk.LabelFrame(frame, text="4G Firmware Swap (Optional, RC Pro 2 only)", padding=10)
+        self.fourg_box.pack(fill="x", pady=(8, 0))
+        self.fourg_status = ttk.Label(self.fourg_box,
+            text="Optional: flashes a 4G-enabling firmware update onto the controller.\n"
+                 "This is a 937 MB download. Required if you want 4G on the RC Pro 2.\n"
+                 "Skip this if you only want FCC mode.",
+            font=("Segoe UI", 9), foreground="#888", wraplength=500, justify="left")
+        self.fourg_status.pack(anchor="w")
+        self.btn_firmware = ttk.Button(self.fourg_box, text="Download + Flash 4G Firmware",
+            state=DISABLED, command=self._do_firmware_swap)
+        self.btn_firmware.pack(fill="x", pady=(4, 0))
 
         # Back/Next
         btns2 = ttk.Frame(frame)
@@ -417,6 +443,11 @@ class LauncherApp:
                 elif self.current_step.get() == 1:
                     self.usb_status.config(text="✓ USB debugging is enabled!", foreground="#4CAF50")
                     self.btn_usb_next.config(state=NORMAL)
+                elif self.current_step.get() == 2:
+                    if self.apk_ready.get() and not self.is_busy.get():
+                        self.btn_install.config(state=NORMAL)
+                    if not self.is_busy.get():
+                        self.btn_firmware.config(state=NORMAL)
             elif dev["state"] == "unauthorized":
                 if self.current_step.get() == 0:
                     self.connect_hint.config(text="Controller detected. Tap 'Allow USB debugging' on the controller screen.", foreground="#FF9800")
@@ -530,6 +561,8 @@ class LauncherApp:
     def _check_install_ready(self):
         if self.apk_ready.get() and self.device_state.get() == "device" and not self.is_busy.get():
             self.btn_install.config(state=NORMAL)
+        if self.device_state.get() == "device" and not self.is_busy.get():
+            self.btn_firmware.config(state=NORMAL)
 
     # --- Install ---
     def _do_install(self):
@@ -648,6 +681,290 @@ class LauncherApp:
                     self.root.after(0, lambda o=op, v=out2.strip(): self.log(f"    read-back: {v}"))
 
         self.root.after(0, lambda: self.log("  ✓ Screen timeout set to 10 min"))
+
+    # --- 4G Firmware Swap ---
+    def _do_firmware_swap(self):
+        if self.is_busy.get():
+            return
+        serial = self.locked_serial or self.device_serial.get()
+        if not serial or self.device_state.get() != "device":
+            messagebox.showwarning(APP_NAME, "No controller connected.")
+            return
+        model = self.expected_model or ""
+        if model != "rc520":
+            ok = messagebox.askyesno(APP_NAME,
+                "The 4G firmware swap is verified only on the RC Pro 2 (rc520).\n"
+                f"Your controller is: {self.device_model.get()} ({model})\n\n"
+                "Continue anyway?")
+            if not ok:
+                return
+
+        ok = messagebox.askyesno(APP_NAME,
+            "4G Firmware Swap\n\n"
+            "This will flash a 937 MB firmware update onto your controller.\n"
+            "The controller will reboot at the end.\n\n"
+            "Supported aircraft: Mavic 4 Pro, Air 3S, Air 3, Mini 4 Pro.\n\n"
+            "Do NOT disconnect the USB cable during the flash.\n\n"
+            "Continue?")
+        if not ok:
+            return
+
+        self._set_busy(True)
+        self.btn_firmware.config(state=DISABLED)
+        self.log("Starting 4G firmware swap...")
+
+        def worker():
+            try:
+                self._firmware_swap_worker(serial)
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Firmware swap error: {e}"))
+                self.root.after(0, lambda: self.set_progress(0, f"Error: {e}"))
+                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _firmware_swap_worker(self, serial):
+        import time as _time
+
+        # Step 1: Set screen timeout to 1 hour
+        self.root.after(0, lambda: self.set_progress(2, "Preparing controller..."))
+        self.root.after(0, lambda: self.log("  Setting screen timeout to 1 hour..."))
+        run_adb(["-s", serial, "shell", "settings", "put", "system", "screen_off_timeout", "3600000"], timeout=10)
+
+        # Step 2: Download firmware
+        fw_path = Path(tempfile.gettempdir()) / "firmware_update.zip"
+        if fw_path.exists() and fw_path.stat().st_size == FIRMWARE_SIZE:
+            self.root.after(0, lambda: self.log("  Firmware already cached, skipping download"))
+        else:
+            self.root.after(0, lambda: self.set_progress(5, "Downloading 4G firmware (937 MB)..."))
+            self.root.after(0, lambda: self.log("  Downloading 4G firmware (937 MB)..."))
+            try:
+                download_file(FIRMWARE_URL, str(fw_path),
+                    on_progress=lambda p: self.root.after(0, lambda: self.set_progress(5 + int(p * 30), f"Downloading firmware... {p*100:.0f}%")),
+                    on_status=lambda s: self.root.after(0, lambda: self.log(f"  {s}")),
+                )
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"  Firmware download failed: {e}"))
+                self.root.after(0, lambda: self.set_progress(0, "Download failed"))
+                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+                return
+
+            # Verify SHA-256
+            self.root.after(0, lambda: self.set_progress(35, "Verifying firmware hash..."))
+            self.root.after(0, lambda: self.log("  Verifying SHA-256..."))
+            sha = sha256_file(str(fw_path))
+            if sha.lower() != FIRMWARE_SHA256.lower():
+                self.root.after(0, lambda: self.log(f"  ✗ Hash mismatch: got {sha[:16]}..., expected {FIRMWARE_SHA256[:16]}..."))
+                self.root.after(0, lambda: self.set_progress(0, "Hash mismatch"))
+                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+                return
+            self.root.after(0, lambda: self.log(f"  ✓ Hash verified: {sha[:16]}..."))
+
+        # Step 3: Free space check
+        self.root.after(0, lambda: self.set_progress(38, "Checking free space..."))
+        self.root.after(0, lambda: self.log("  Checking free space on controller..."))
+        rc, out, err = run_adb(["-s", serial, "shell", "df", "-k", "/data"], timeout=30)
+        # Parse available KB from df output
+        free_kb = None
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[0] != "Filesystem":
+                try:
+                    free_kb = int(parts[3])
+                except ValueError:
+                    continue
+        need_bytes = FIRMWARE_SIZE + FIRMWARE_SPACE_HEADROOM
+        if free_kb is not None:
+            free_bytes = free_kb * 1024
+            if free_bytes < need_bytes:
+                self.root.after(0, lambda: self.log(f"  ✗ Not enough free space: {free_bytes/1e9:.2f} GB, need {need_bytes/1e9:.2f} GB"))
+                self.root.after(0, lambda: self.set_progress(0, "Not enough space"))
+                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+                return
+            self.root.after(0, lambda: self.log(f"  Free space OK: {free_bytes/1e9:.2f} GB"))
+
+        # Step 4: Push firmware to controller
+        self.root.after(0, lambda: self.set_progress(40, "Pushing firmware to controller (937 MB)..."))
+        self.root.after(0, lambda: self.log("  Pushing firmware to controller..."))
+
+        push_ok = False
+        for attempt in range(FIRMWARE_PUSH_ATTEMPTS):
+            self.root.after(0, lambda a=attempt: self.log(f"  Push attempt {a+1}/{FIRMWARE_PUSH_ATTEMPTS}..."))
+            run_adb(["-s", serial, "shell", "rm", "-f", "/data/local/tmp/update.zip"], timeout=10)
+            rc, out, err = run_adb(["-s", serial, "push", str(fw_path), "/sdcard/update.zip"], timeout=1800)
+            if rc == 0:
+                push_ok = True
+                self.root.after(0, lambda: self.log("  ✓ Firmware pushed"))
+                break
+            else:
+                self.root.after(0, lambda a=attempt: self.log(f"  Push failed (attempt {a+1}): {err.strip()[:100]}"))
+                run_adb(["-s", serial, "shell", "rm", "-f", "/sdcard/update.zip"], timeout=10)
+
+        if not push_ok:
+            self.root.after(0, lambda: self.log("  ✗ Push failed after all attempts"))
+            self.root.after(0, lambda: self.set_progress(0, "Push failed"))
+            self.root.after(0, lambda: self._set_busy(False))
+            self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+            return
+
+        # Step 5: Verify on-device copy
+        self.root.after(0, lambda: self.set_progress(60, "Verifying on-device firmware..."))
+        self.root.after(0, lambda: self.log("  Verifying firmware on controller..."))
+
+        # Try sha256sum
+        rc, out, err = run_adb(["-s", serial, "shell", "command", "-v", "sha256sum"], timeout=10)
+        hasher = "sha256sum" if rc == 0 and out.strip() else None
+        if not hasher:
+            rc, out, err = run_adb(["-s", serial, "shell", "command", "-v", "toybox"], timeout=10)
+            if rc == 0 and out.strip():
+                hasher = "toybox sha256sum"
+
+        if hasher:
+            self.root.after(0, lambda: self.log(f"  Hashing with {hasher}..."))
+            rc, out, err = run_adb(["-s", serial, "shell", hasher, "/sdcard/update.zip"], timeout=FIRMWARE_SHA_TIMEOUT)
+            remote_sha = out.strip().split()[0].lower() if rc == 0 and out.strip() else ""
+            if remote_sha == FIRMWARE_SHA256.lower():
+                self.root.after(0, lambda: self.log("  ✓ On-device hash verified"))
+            else:
+                self.root.after(0, lambda: self.log(f"  ✗ Hash mismatch on device: {remote_sha[:16]}..."))
+                self.root.after(0, lambda: self.set_progress(0, "Hash mismatch on device"))
+                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+                return
+        else:
+            # Fallback: size check + ZIP magic
+            self.root.after(0, lambda: self.log("  No hasher on device, checking size + ZIP magic..."))
+            rc, out, err = run_adb(["-s", serial, "shell", "stat", "-c", "%s", "/sdcard/update.zip"], timeout=30)
+            try:
+                remote_size = int(out.strip())
+            except ValueError:
+                remote_size = 0
+            if remote_size != FIRMWARE_SIZE:
+                self.root.after(0, lambda: self.log(f"  ✗ Size mismatch: {remote_size} vs {FIRMWARE_SIZE}"))
+                self.root.after(0, lambda: self.set_progress(0, "Size mismatch on device"))
+                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+                return
+            rc, out, err = run_adb(["-s", serial, "shell", "head", "-c", "2", "/sdcard/update.zip"], timeout=30)
+            if "PK" not in out:
+                self.root.after(0, lambda: self.log("  ✗ Bad ZIP header on device"))
+                self.root.after(0, lambda: self.set_progress(0, "Bad header on device"))
+                self.root.after(0, lambda: self._set_busy(False))
+                self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+                return
+            self.root.after(0, lambda: self.log("  ✓ Size + ZIP magic verified"))
+
+        # Step 6: Flash via update_engine_client
+        self.root.after(0, lambda: self.set_progress(65, "Flashing firmware..."))
+        self.root.after(0, lambda: self.log("  Flashing firmware via update_engine_client..."))
+
+        flash_ok = False
+        flash_deadline = _time.monotonic() + FIRMWARE_FLASH_TOTAL_TIMEOUT
+        for attempt in range(FIRMWARE_FLASH_ATTEMPTS):
+            if _time.monotonic() >= flash_deadline:
+                break
+            self.root.after(0, lambda a=attempt: self.log(f"  Flash attempt {a+1}/{FIRMWARE_FLASH_ATTEMPTS}..."))
+
+            # Reset status
+            run_adb(["-s", serial, "shell", "update_engine_client", "--reset_status"], timeout=30)
+
+            # Run update_engine_client with streaming output
+            adb = get_adb_path()
+            flags = 0x08000000 if platform.system() == "Windows" else 0
+            try:
+                proc = subprocess.Popen(
+                    [adb, "-s", serial, "shell", "update_engine_client", "--path=/sdcard/update.zip", "--update"],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    creationflags=flags
+                )
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"  Flash launch failed: {e}"))
+                continue
+
+            fatal = False
+            try:
+                while True:
+                    line = proc.stdout.readline()
+                    if not line:
+                        if proc.poll() is not None:
+                            break
+                        continue
+                    line = line.strip()
+                    if "DOWNLOADING" in line and "," in line:
+                        try:
+                            frac = float(line.split(",")[1].strip())
+                            pct = max(0, min(100, int(frac * 100)))
+                            self.root.after(0, lambda p=pct: self.set_progress(65 + int(p * 0.25), f"Flashing... {p}%"))
+                        except ValueError:
+                            pass
+                    if "UPDATED_NEED_REBOOT" in line:
+                        flash_ok = True
+                        self.root.after(0, lambda: self.log("  ✓ Flash complete (UPDATED_NEED_REBOOT)"))
+                        proc.terminate()
+                        break
+                    if "onPayloadApplicationComplete" in line:
+                        try:
+                            code = int(line.split("(")[-1].rstrip(")"))
+                        except ValueError:
+                            code = -1
+                        if code == 0:
+                            flash_ok = True
+                            self.root.after(0, lambda: self.log("  ✓ Flash complete (code 0)"))
+                        else:
+                            fatal = True
+                            self.root.after(0, lambda c=code: self.log(f"  ✗ Flash failed (error code {c})"))
+                        break
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"  Flash stream error: {e}"))
+
+            if flash_ok:
+                break
+            if fatal:
+                break
+            self.root.after(0, lambda: self.log("  Flash interrupted, will resume..."))
+
+        if not flash_ok:
+            self.root.after(0, lambda: self.log("  ✗ Firmware flash did not complete"))
+            self.root.after(0, lambda: self.set_progress(0, "Flash failed"))
+            self.root.after(0, lambda: self._set_busy(False))
+            self.root.after(0, lambda: self.btn_firmware.config(state=NORMAL))
+            return
+
+        # Step 7: Reboot
+        self.root.after(0, lambda: self.set_progress(92, "Rebooting controller..."))
+        self.root.after(0, lambda: self.log("  Cleaning up..."))
+        run_adb(["-s", serial, "shell", "rm", "-f", "/sdcard/update.zip"], timeout=10)
+        run_adb(["-s", serial, "shell", "rm", "-f", "/data/local/tmp/update.zip"], timeout=10)
+        self.root.after(0, lambda: self.log("  Rebooting controller..."))
+        run_adb(["-s", serial, "shell", "reboot"], timeout=30)
+
+        # Wait for device to come back
+        self.root.after(0, lambda: self.log("  Waiting for controller to come back..."))
+        run_adb(["-s", serial, "wait-for-device"], timeout=240)
+        # Wait for boot completed
+        self.root.after(0, lambda: self.log("  Waiting for boot to complete..."))
+        deadline = _time.monotonic() + 240
+        while _time.monotonic() < deadline:
+            rc, out, err = run_adb(["-s", serial, "shell", "getprop", "sys.boot_completed"], timeout=10)
+            if "1" in out.strip():
+                break
+            _time.sleep(3)
+
+        self.root.after(0, lambda: self.set_progress(100, "4G firmware swap complete!"))
+        self.root.after(0, lambda: self.log("  ✓ 4G firmware swap complete!"))
+        self.root.after(0, lambda: self.log("  The controller has been updated and rebooted."))
+        self.root.after(0, lambda: self.log("  Now open FreeFCC → Connect → Turn 4G ON."))
+        self.root.after(0, lambda: self.firmware_swap_done.set(True))
+        self.root.after(0, lambda: self.fourg_status.config(
+            text="✓ 4G firmware swap complete! Open FreeFCC and tap Turn 4G ON.",
+            foreground="#4CAF50"))
+        self.root.after(0, lambda: self._set_busy(False))
 
 
 def main():

@@ -107,16 +107,58 @@ FreeFCC itself works on the RC 2 and has been tested there. This launcher target
 
 The launcher bundles the Android Debug Bridge (adb) binary inside the exe. When you run it, the exe extracts adb to a temporary folder and uses it to talk to the controller over USB. Every adb command runs silently with no visible terminal window.
 
+### FCC Mode Install
+
 The installation process:
 
 1. **Detect** the controller by polling adb devices every 2 seconds
 2. **Guide** the user through enabling USB debugging on the controller screen
 3. **Download** the FreeFCC APK from the official GitHub release
-4. **Install** the APK on the controller
-5. **Grant** the runtime permissions FreeFCC needs
+4. **Install** the APK on the controller with adb install
+5. **Grant** the runtime permissions FreeFCC needs (pm grant + appops set)
 6. **Launch** FreeFCC on the controller
 
-After that, FreeFCC runs on the controller and does the FCC unlock itself. See the [FreeFCC readme](https://github.com/doesthings/FreeFCC#how-it-works) for how that works.
+After that, FreeFCC runs on the controller and does the FCC unlock itself by sending 21 DUMPL command frames to the controller's local TCP socket at 127.0.0.1:40009. The frames enter service mode, set the radio region to FCC, write channel maps and power limits, commit the change, and exit service mode. See the [FreeFCC readme](https://github.com/doesthings/FreeFCC#how-it-works) for the full DUMPL protocol details.
+
+### 4G Firmware Swap (Optional, RC Pro 2 Only)
+
+4G mode on the RC Pro 2 requires a controller firmware update that opens the 4G hardware path. Without it, the 4G activation frames have nothing to talk to. The launcher can do this swap for you:
+
+1. **Download** a 937 MB DJI signed OTA firmware package (update.zip) from the GitHub release
+2. **Verify** the SHA 256 hash (182e459b...) against the expected value
+3. **Push** the firmware to /sdcard/update.zip on the controller via adb
+4. **Verify** the on device copy by hashing it with sha256sum (or size + ZIP magic check if no hasher)
+5. **Flash** via update_engine_client --path=/sdcard/update.zip --update (up to 12 attempts, 25 min total timeout, resumes from checkpoint on interruption)
+6. **Reboot** the controller and wait for it to come back online
+7. **Cleanup** the temporary update.zip files
+
+After the firmware swap, open FreeFCC on the controller and tap "Turn 4G ON". FreeFCC sends 128 DUMPL frames to the 4G module via a Unix domain socket at /duss/mb/0x205 (abstract namespace). Each frame carries the aircraft serial number in its payload.
+
+Supported aircraft for 4G: Mavic 4 Pro, Air 3S, Air 3, Mini 4 Pro.
+
+The firmware swap is optional. If you only want FCC mode, skip it entirely.
+
+### What Gets Installed
+
+| Component | What | Size |
+|-----------|------|------|
+| FreeFCC APK | The FCC unlock app (from GitHub) | ~19 MB |
+| 4G Firmware | DJI signed OTA for RC Pro 2 (optional) | ~937 MB |
+
+### ADB Commands Used
+
+The launcher runs these adb commands silently (no terminal visible to the user):
+
+```
+adb devices -l                              # detect controller
+adb -s <serial> install -r FreeFCC.apk      # install the app
+adb -s <serial> shell pm grant <perm>      # grant permissions
+adb -s <serial> shell appops set <op> allow # grant appops
+adb -s <serial> shell am start -n <activity> # launch the app
+adb -s <serial> push update.zip /sdcard/    # push firmware (4G swap)
+adb -s <serial> shell update_engine_client --update  # flash (4G swap)
+adb -s <serial> shell reboot                # reboot (4G swap)
+```
 
 ---
 
